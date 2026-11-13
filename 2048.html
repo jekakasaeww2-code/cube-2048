@@ -1,0 +1,1415 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Куб 2048: Слияние</title>
+    <!-- Подключение Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Официальный SDK VK Bridge -->
+    <script src="https://unpkg.com/@vkontakte/vk-bridge/dist/browser.min.js"></script>
+    <!-- Шрифт Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-main: #141418;
+            --bg-board: #23232a;
+            --bg-cell: #2e2e38;
+            --vk-blue: #0077FF;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-main);
+            color: #ffffff;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        /* Контейнер игрового поля 4x4 */
+        .board-container {
+            position: relative;
+            width: 100%;
+            max-width: 390px;
+            aspect-ratio: 1 / 1;
+            background-color: var(--bg-board);
+            border-radius: 20px;
+            padding: 12px;
+            box-shadow: 0 14px 35px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            touch-action: none;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: box-shadow 0.3s ease, border-color 0.3s ease;
+        }
+
+        /* Подсветка поля в режиме Молотка */
+        .board-container.hammer-mode {
+            border-color: #ef4444;
+            box-shadow: 0 0 28px rgba(239, 68, 68, 0.4), inset 0 0 15px rgba(239, 68, 68, 0.2);
+            cursor: crosshair;
+        }
+
+        .grid-background {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(4, 1fr);
+            gap: 12px;
+            width: 100%;
+            height: 100%;
+        }
+
+        .grid-cell {
+            background-color: var(--bg-cell);
+            border-radius: 12px;
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Слой для анимированных плиток */
+        .tiles-layer {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            right: 12px;
+            bottom: 12px;
+            pointer-events: none;
+        }
+
+        .board-container.hammer-mode .tiles-layer {
+            pointer-events: auto;
+        }
+
+        /* Сама плитка */
+        .tile {
+            position: absolute;
+            width: calc((100% - 36px) / 4);
+            height: calc((100% - 36px) / 4);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            transition: transform 0.13s cubic-bezier(0.22, 1, 0.36, 1);
+            will-change: transform;
+            z-index: 10;
+        }
+
+        .board-container.hammer-mode .tile {
+            cursor: pointer;
+            animation: hammerShake 0.45s infinite ease-in-out;
+        }
+
+        .board-container.hammer-mode .tile:hover {
+            filter: brightness(1.25) contrast(1.1);
+            outline: 2px solid #ef4444;
+        }
+
+        @keyframes hammerShake {
+            0%, 100% { transform: translate(var(--tx), var(--ty)) rotate(0deg); }
+            25% { transform: translate(var(--tx), var(--ty)) rotate(-2.5deg) scale(0.97); }
+            75% { transform: translate(var(--tx), var(--ty)) rotate(2.5deg) scale(0.97); }
+        }
+
+        .tile-inner {
+            width: 100%;
+            height: 100%;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), inset 0 1px 1px rgba(255, 255, 255, 0.25);
+            transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        /* Анимация появления новой плитки */
+        .tile-new .tile-inner {
+            animation: tileSpawn 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        /* Анимация слияния двух плиток */
+        .tile-merged {
+            z-index: 20;
+        }
+        .tile-merged .tile-inner {
+            animation: tilePop 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        }
+
+        @keyframes tileSpawn {
+            0% { transform: scale(0); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        @keyframes tilePop {
+            0% { transform: scale(0.85); }
+            50% { transform: scale(1.18); }
+            100% { transform: scale(1); }
+        }
+
+        /* Цветовая палитра неоновых кубов */
+        .val-2 { background: linear-gradient(135deg, #3a3f58, #2b3044); color: #e2e8f0; font-size: 2rem; }
+        .val-4 { background: linear-gradient(135deg, #4b5563, #374151); color: #f8fafc; font-size: 2rem; }
+        .val-8 { background: linear-gradient(135deg, #0284c7, #0369a1); color: #ffffff; font-size: 2rem; box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35); }
+        .val-16 { background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #ffffff; font-size: 1.9rem; box-shadow: 0 4px 15px rgba(37, 99, 235, 0.4); }
+        .val-32 { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: #ffffff; font-size: 1.9rem; box-shadow: 0 4px 16px rgba(124, 58, 237, 0.45); }
+        .val-64 { background: linear-gradient(135deg, #c026d3, #a21caf); color: #ffffff; font-size: 1.9rem; box-shadow: 0 4px 18px rgba(192, 38, 211, 0.5); }
+        .val-128 { background: linear-gradient(135deg, #e11d48, #be123c); color: #ffffff; font-size: 1.65rem; box-shadow: 0 0 20px rgba(225, 29, 72, 0.6); }
+        .val-256 { background: linear-gradient(135deg, #ea580c, #c2410c); color: #ffffff; font-size: 1.65rem; box-shadow: 0 0 22px rgba(234, 88, 12, 0.65); }
+        .val-512 { background: linear-gradient(135deg, #d97706, #b45309); color: #ffffff; font-size: 1.65rem; box-shadow: 0 0 25px rgba(245, 158, 11, 0.7); }
+        .val-1024 { background: linear-gradient(135deg, #10b981, #059669); color: #ffffff; font-size: 1.35rem; box-shadow: 0 0 28px rgba(16, 185, 129, 0.75); border: 1px solid rgba(255,255,255,0.4); }
+        .val-2048 { background: linear-gradient(135deg, #facc15, #eab308, #f59e0b); color: #18181b; font-size: 1.35rem; box-shadow: 0 0 32px rgba(250, 204, 21, 0.85); border: 2px solid #fef08a; }
+        .val-super { background: linear-gradient(135deg, #ec4899, #8b5cf6, #06b6d4); color: #ffffff; font-size: 1.25rem; box-shadow: 0 0 35px rgba(139, 92, 246, 0.9); border: 2px solid #ffffff; }
+
+        /* Вылетающие очки над плитками */
+        .floating-score {
+            position: absolute;
+            font-weight: 800;
+            font-size: 1.15rem;
+            color: #fde047;
+            text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+            pointer-events: none;
+            z-index: 40;
+            animation: floatUp 0.75s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes floatUp {
+            0% { transform: translateY(0) scale(0.8); opacity: 1; }
+            100% { transform: translateY(-42px) scale(1.15); opacity: 0; }
+        }
+
+        /* Кнопки бустеров */
+        .booster-btn {
+            background: linear-gradient(180deg, #2a2a35 0%, #212129 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.35);
+            transition: all 0.15s ease;
+        }
+        .booster-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            border-color: rgba(255, 255, 255, 0.2);
+            background: linear-gradient(180deg, #323240 0%, #262630 100%);
+        }
+        .booster-btn:active:not(:disabled) {
+            transform: translateY(1px);
+        }
+        .booster-btn.active-mode {
+            background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%);
+            border-color: #fca5a5;
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+        }
+
+        @media (max-width: 380px) {
+            .val-2, .val-4, .val-8, .val-16, .val-32, .val-64 { font-size: 1.6rem; }
+            .val-128, .val-256, .val-512 { font-size: 1.35rem; }
+            .val-1024, .val-2048, .val-super { font-size: 1.1rem; }
+            .board-container { padding: 9px; }
+            .grid-background { gap: 9px; }
+            .tiles-layer { top: 9px; left: 9px; right: 9px; bottom: 9px; }
+            .tile { width: calc((100% - 27px) / 4); height: calc((100% - 27px) / 4); }
+        }
+    </style>
+</head>
+<body class="py-3 px-3 sm:py-5 select-none">
+
+    <!-- ВЕРХНЯЯ ПАНЕЛЬ / ШАПКА ИГРЫ -->
+    <div class="w-full max-w-[390px] flex flex-col gap-3">
+        <!-- Строка заголовка и быстрых кнопок -->
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-500/30 border border-white/20 font-black text-sm tracking-tighter">
+                    2048
+                </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-black tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-white via-blue-100 to-indigo-300">
+                        Куб 2048: Слияние
+                    </h1>
+                    <p class="text-[11px] text-zinc-400 font-medium mt-0.5">Собери неоновый куб 2048!</p>
+                </div>
+            </div>
+
+            <!-- Кнопки управления в шапке -->
+            <div class="flex items-center gap-1.5">
+                <!-- Звук -->
+                <button id="btn-sound" onclick="game.toggleSound()" title="Звук Вкл/Выкл"
+                    class="w-9 h-9 rounded-xl bg-[#23232a] hover:bg-[#2e2e38] border border-white/10 flex items-center justify-center text-zinc-200 transition active:scale-95">
+                    <svg id="icon-sound-on" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                    </svg>
+                    <svg id="icon-sound-off" class="w-5 h-5 hidden text-rose-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2"/>
+                    </svg>
+                </button>
+
+                <!-- Поделиться на стене ВК -->
+                <button onclick="vkManager.shareRecord(game.score, game.bestScore)" title="Похвастаться рекордом ВК"
+                    class="w-9 h-9 rounded-xl bg-[#0077FF]/20 hover:bg-[#0077FF]/30 border border-[#0077FF]/40 flex items-center justify-center text-[#3b9dff] transition active:scale-95">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                    </svg>
+                </button>
+
+                <!-- Новая игра -->
+                <button onclick="game.confirmRestart()" title="Начать заново"
+                    class="w-9 h-9 rounded-xl bg-[#23232a] hover:bg-[#2e2e38] border border-white/10 flex items-center justify-center text-zinc-200 transition active:scale-95">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Табло Счета и Рекорда -->
+        <div class="grid grid-cols-2 gap-2.5">
+            <div class="bg-[#23232a] border border-white/5 rounded-2xl py-2 px-3.5 flex flex-col justify-center relative overflow-hidden">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Счет</span>
+                <div class="flex items-baseline gap-2">
+                    <span id="score-val" class="text-xl sm:text-2xl font-black text-white leading-tight">0</span>
+                    <span id="score-delta" class="text-xs font-extrabold text-emerald-400 opacity-0 transition-opacity duration-300">+0</span>
+                </div>
+            </div>
+            <div class="bg-[#23232a] border border-amber-500/20 rounded-2xl py-2 px-3.5 flex flex-col justify-center relative overflow-hidden">
+                <div class="flex items-center justify-between">
+                    <span class="text-[10px] font-bold uppercase tracking-wider text-amber-400/90">Рекорд ВК</span>
+                    <span class="text-[10px] text-amber-400">★</span>
+                </div>
+                <span id="best-val" class="text-xl sm:text-2xl font-black text-amber-300 leading-tight">0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ПОДСКАЗКА РЕЖИМА МОЛОТКА (Скрыта по умолчанию) -->
+    <div id="hammer-banner" class="hidden w-full max-w-[390px] my-1 py-1.5 px-3 rounded-xl bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs font-semibold flex items-center justify-between animate-pulse">
+        <span>🔨 Нажми на любую плитку, чтобы разбить её!</span>
+        <button onclick="game.cancelHammerMode()" class="underline text-white ml-2 font-bold">Отмена</button>
+    </div>
+
+    <!-- ЦЕНТРАЛЬНОЕ ИГРОВОЕ ПОЛЕ 4x4 -->
+    <div class="w-full flex flex-col items-center my-2">
+        <div id="board-container" class="board-container">
+            <!-- Фоновая сетка 4x4 -->
+            <div class="grid-background">
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+                <div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div><div class="grid-cell"></div>
+            </div>
+            <!-- Динамический слой для плиток -->
+            <div id="tiles-layer" class="tiles-layer"></div>
+            <!-- Слой для всплывающих очков -->
+            <div id="fx-layer" class="tiles-layer pointer-events-none overflow-hidden"></div>
+        </div>
+    </div>
+
+    <!-- НИЖНЯЯ ПАНЕЛЬ БУСТЕРОВ (УДЕРЖАНИЕ И МОНЕТИЗАЦИЯ ВК) -->
+    <div class="w-full max-w-[390px] flex flex-col gap-2.5">
+        <div class="grid grid-cols-3 gap-2.5">
+            <!-- Бустер 1: Отмена хода -->
+            <button id="btn-undo" onclick="game.useUndo()" class="booster-btn rounded-2xl p-2.5 flex flex-col items-center justify-center relative">
+                <div id="badge-undo" class="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-600 text-white shadow">
+                    2
+                </div>
+                <svg class="w-6 h-6 text-blue-400 mb-1" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+                </svg>
+                <span class="text-xs font-bold text-white">Шаг назад</span>
+                <span id="sub-undo" class="text-[10px] text-zinc-400">Отмена хода</span>
+            </button>
+
+            <!-- Бустер 2: Молоток -->
+            <button id="btn-hammer" onclick="game.toggleHammer()" class="booster-btn rounded-2xl p-2.5 flex flex-col items-center justify-center relative">
+                <div id="badge-hammer" class="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white shadow">
+                    1
+                </div>
+                <svg class="w-6 h-6 text-rose-400 mb-1" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+                </svg>
+                <span class="text-xs font-bold text-white">Молоток</span>
+                <span id="sub-hammer" class="text-[10px] text-zinc-400">Разбить куб</span>
+            </button>
+
+            <!-- Бустер 3: Перемешать -->
+            <button id="btn-shuffle" onclick="game.useShuffle()" class="booster-btn rounded-2xl p-2.5 flex flex-col items-center justify-center relative">
+                <div id="badge-shuffle" class="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-600 text-white shadow">
+                    1
+                </div>
+                <svg class="w-6 h-6 text-purple-400 mb-1" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                <span class="text-xs font-bold text-white">Миксер</span>
+                <span id="sub-shuffle" class="text-[10px] text-zinc-400">Перемешать</span>
+            </button>
+        </div>
+
+        <!-- Статус-бар VK Bridge и облачного сохранения -->
+        <div class="bg-[#1c1c22] border border-white/5 rounded-xl px-3 py-1.5 flex items-center justify-between text-[11px] text-zinc-400">
+            <div class="flex items-center gap-2">
+                <span id="vk-status-dot" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span id="vk-status-text">VK Bridge: Активен</span>
+            </div>
+            <span id="cloud-save-status" class="text-zinc-500">Облако ВК: синхр.</span>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО: ПОБЕДА 2048 / ПОРАЖЕНИЕ / ПЕРЕЗАПУСК -->
+    <div id="modal-overlay" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-[#23232a] border border-white/10 rounded-3xl max-w-sm w-full p-6 text-center shadow-2xl transform transition-all">
+            <div id="modal-icon" class="w-16 h-16 mx-auto mb-3 rounded-2xl flex items-center justify-center text-3xl shadow-lg">
+                🏆
+            </div>
+            <h2 id="modal-title" class="text-2xl font-black text-white mb-1">Победа! Куб 2048!</h2>
+            <p id="modal-desc" class="text-sm text-zinc-300 mb-5">Ты собрал легендарный неоновый куб 2048! Продолжим ставить рекорд?</p>
+
+            <div class="bg-[#19191f] rounded-2xl p-3 mb-5 grid grid-cols-2 gap-2 border border-white/5">
+                <div>
+                    <div class="text-[10px] uppercase text-zinc-400 font-bold">Счет партии</div>
+                    <div id="modal-score" class="text-xl font-black text-white">0</div>
+                </div>
+                <div>
+                    <div class="text-[10px] uppercase text-amber-400 font-bold">Лучший рекорд</div>
+                    <div id="modal-best" class="text-xl font-black text-amber-400">0</div>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-2.5">
+                <!-- Кнопка Второго шанса за рекламу (при Game Over) -->
+                <button id="btn-second-chance" onclick="game.useSecondChance()"
+                    class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-extrabold text-sm shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition active:scale-95">
+                    <span>🎬 Второй шанс (Убрать все 2 и 4)</span>
+                </button>
+
+                <!-- Кнопка Продолжить (при Победе 2048) -->
+                <button id="btn-continue" onclick="game.continueAfter2048()"
+                    class="hidden w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 text-zinc-950 font-extrabold text-sm shadow-lg shadow-amber-500/30 transition active:scale-95">
+                    Продолжить игру (Режим 4096+)
+                </button>
+
+                <!-- Поделиться на стене ВК -->
+                <button onclick="vkManager.shareRecord(game.score, game.bestScore)"
+                    class="w-full py-2.5 px-4 rounded-xl bg-[#0077FF] hover:bg-[#0066dd] text-white font-bold text-sm flex items-center justify-center gap-2 transition active:scale-95">
+                    <span>Поделиться рекордом на стене ВК</span>
+                </button>
+
+                <!-- Новая партия -->
+                <button onclick="game.startNewGame()"
+                    class="w-full py-2.5 px-4 rounded-xl bg-zinc-700/60 hover:bg-zinc-700 text-zinc-200 font-semibold text-sm transition active:scale-95">
+                    Начать новую партию
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО ПОДТВЕРЖДЕНИЯ СБРОСА -->
+    <div id="confirm-overlay" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-[#23232a] border border-white/10 rounded-3xl max-w-xs w-full p-5 text-center shadow-2xl">
+            <h3 class="text-lg font-extrabold text-white mb-1">Начать заново?</h3>
+            <p class="text-xs text-zinc-400 mb-4">Текущий прогресс на поле будет сброшен, но твой лучший рекорд сохранится.</p>
+            <div class="grid grid-cols-2 gap-2.5">
+                <button onclick="game.closeConfirm()" class="py-2.5 rounded-xl bg-zinc-700 text-white text-xs font-bold">Отмена</button>
+                <button onclick="game.startNewGame()" class="py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold">Сбросить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ВСПЛЫВАЮЩЕЕ УВЕДОМЛЕНИЕ (TOAST В СТИЛЕ ВК) -->
+    <div id="vk-toast" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-none opacity-0 transition-all duration-300 transform -translate-y-3">
+        <div class="bg-[#2c2d2e] border border-white/15 text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 text-xs font-semibold whitespace-nowrap">
+            <span id="vk-toast-icon" class="text-base">🎬</span>
+            <span id="vk-toast-msg">Уведомление ВК</span>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * 1. СИНТЕЗАТОР ЗВУКОВ НА WEB AUDIO API (БЕЗ ВНЕШНИХ ФАЙЛОВ)
+         * ============================================================================
+         */
+        class SoundFX {
+            constructor() {
+                this.ctx = null;
+                this.enabled = true;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    if (AudioCtx) this.ctx = new AudioCtx();
+                }
+                if (this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playMove() {
+                if (!this.enabled) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(150, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(95, this.ctx.currentTime + 0.065);
+
+                gain.gain.setValueAtTime(0.08, this.ctx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, this.ctx.currentTime + 0.065);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.07);
+            }
+
+            playMerge(value) {
+                if (!this.enabled) return;
+                this.init();
+                if (!this.ctx) return;
+
+                // Чем выше номинал куба, тем выше и ярче нота слияния
+                const step = Math.min(Math.log2(value || 4), 12);
+                const baseFreq = 220 + step * 48;
+
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(baseFreq, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.35, this.ctx.currentTime + 0.14);
+
+                gain.gain.setValueAtTime(0.14, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.008, this.ctx.currentTime + 0.15);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.15);
+            }
+
+            playHammer() {
+                if (!this.enabled) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(190, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(45, this.ctx.currentTime + 0.18);
+
+                gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.18);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.19);
+            }
+
+            playWin() {
+                if (!this.enabled) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const notes = [523.25, 659.25, 783.99, 1046.50];
+                notes.forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'triangle';
+                    const startTime = this.ctx.currentTime + idx * 0.09;
+                    osc.frequency.setValueAtTime(freq, startTime);
+
+                    gain.gain.setValueAtTime(0.15, startTime);
+                    gain.gain.exponentialRampToValueAtTime(0.008, startTime + 0.28);
+
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(startTime);
+                    osc.stop(startTime + 0.29);
+                });
+            }
+        }
+
+        const sound = new SoundFX();
+
+        /**
+         * ============================================================================
+         * 2. МЕНЕДЖЕР ИНТЕГРАЦИИ VK BRIDGE (С БЕЗОПАСНЫМ ФОЛЛБЭКОМ)
+         * ============================================================================
+         */
+        class VKBridgeManager {
+            constructor() {
+                this.isVKEnvironment = false;
+                this.storageKey = 'cube2048_vk_save_v1';
+            }
+
+            async init() {
+                const dot = document.getElementById('vk-status-dot');
+                const statusText = document.getElementById('vk-status-text');
+
+                try {
+                    if (typeof vkBridge !== 'undefined') {
+                        // Отправляем обязательное событие инициализации ВК Игр
+                        const data = await Promise.race([
+                            vkBridge.send('VKWebAppInit'),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1200))
+                        ]);
+
+                        if (data && data.result) {
+                            this.isVKEnvironment = true;
+                            dot.className = 'w-2 h-2 rounded-full bg-emerald-400';
+                            statusText.textContent = 'VK Bridge: Подключен';
+                            // Предзагрузка нативной рекламы ВК
+                            vkBridge.send('VKWebAppCheckNativeAds', { ad_format: 'reward' }).catch(() => {});
+                            return;
+                        }
+                    }
+                } catch (err) {
+                    // Если запущено вне iframe ВК, переключаемся в режим симуляции
+                }
+
+                this.isVKEnvironment = false;
+                dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+                statusText.textContent = 'VK Bridge: Тест-режим';
+            }
+
+            showToast(icon, message) {
+                const toast = document.getElementById('vk-toast');
+                document.getElementById('vk-toast-icon').textContent = icon;
+                document.getElementById('vk-toast-msg').textContent = message;
+
+                toast.classList.remove('opacity-0', '-translate-y-3');
+                toast.classList.add('opacity-100', 'translate-y-0');
+
+                clearTimeout(this.toastTimer);
+                this.toastTimer = setTimeout(() => {
+                    toast.classList.add('opacity-0', '-translate-y-3');
+                    toast.classList.remove('opacity-100', 'translate-y-0');
+                }, 2400);
+            }
+
+            async saveState(stateObj) {
+                const raw = JSON.stringify(stateObj);
+                // 1. Мгновенное сохранение в localStorage
+                try {
+                    localStorage.setItem(this.storageKey, raw);
+                } catch (e) {}
+
+                // 2. Облачное сохранение в VK Storage
+                const cloudLabel = document.getElementById('cloud-save-status');
+                if (this.isVKEnvironment && typeof vkBridge !== 'undefined') {
+                    try {
+                        await vkBridge.send('VKWebAppStorageSet', {
+                            key: this.storageKey,
+                            value: raw
+                        });
+                        cloudLabel.textContent = 'Облако ВК: сохранено ✓';
+                    } catch (e) {
+                        cloudLabel.textContent = 'Кэш: сохранено ✓';
+                    }
+                } else {
+                    cloudLabel.textContent = 'Локально: сохранено ✓';
+                }
+            }
+
+            async loadState() {
+                // Сначала пробуем подтянуть из облака ВК
+                if (this.isVKEnvironment && typeof vkBridge !== 'undefined') {
+                    try {
+                        const res = await vkBridge.send('VKWebAppStorageGet', {
+                            keys: [this.storageKey]
+                        });
+                        if (res && res.keys && res.keys[0] && res.keys[0].value) {
+                            return JSON.parse(res.keys[0].value);
+                        }
+                    } catch (e) {}
+                }
+
+                // Фоллбэк на localStorage
+                try {
+                    const localData = localStorage.getItem(this.storageKey);
+                    if (localData) return JSON.parse(localData);
+                } catch (e) {}
+
+                return null;
+            }
+
+            async showRewardedAd(onReward) {
+                if (this.isVKEnvironment && typeof vkBridge !== 'undefined') {
+                    try {
+                        const data = await vkBridge.send('VKWebAppShowNativeAds', { ad_format: 'reward' });
+                        if (data && data.result) {
+                            onReward();
+                            this.showToast('🎁', 'Бонус за рекламу получен!');
+                            return;
+                        }
+                    } catch (err) {
+                        // Если в тестовом кабинете ВК нет рекламного инвентаря, выдаем награду в демо-режиме
+                    }
+                }
+
+                // Красивая симуляция просмотра рекламы вне ВК
+                this.showToast('🎬', 'Просмотр рекламы VK (Демо 1 сек)...');
+                setTimeout(() => {
+                    onReward();
+                    this.showToast('🎁', 'Награда получена!');
+                }, 900);
+            }
+
+            async shareRecord(score, bestScore) {
+                const maxVal = Math.max(score, bestScore);
+                const message = `Я набрал ${maxVal} очков в игре «Куб 2048: Слияние»! Сможешь побить мой рекорд? 🚀`;
+
+                if (this.isVKEnvironment && typeof vkBridge !== 'undefined') {
+                    try {
+                        await vkBridge.send('VKWebAppShowWallPostBox', {
+                            message: message
+                        });
+                        this.showToast('📢', 'Запись опубликована на стене ВК!');
+                        return;
+                    } catch (e) {}
+                }
+
+                // Фоллбэк: копируем текст рекорда в буфер обмена
+                const tempInput = document.createElement('textarea');
+                tempInput.value = message;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                document.execCommand('copy');
+                document.body.removeChild(tempInput);
+                this.showToast('📋', 'Текст рекорда скопирован для ВК!');
+            }
+        }
+
+        const vkManager = new VKBridgeManager();
+
+        /**
+         * ============================================================================
+         * 3. ОСНОВНОЙ ДВИЖОК ИГРЫ «КУБ 2048: СЛИЯНИЕ»
+         * ============================================================================
+         */
+        class Cube2048Game {
+            constructor() {
+                this.size = 4;
+                this.tiles = [];
+                this.nextTileId = 1;
+                this.score = 0;
+                this.bestScore = 0;
+                this.history = []; // стек последних 5 ходов для Undo
+                this.boosters = {
+                    undo: 2,
+                    hammer: 1,
+                    shuffle: 1
+                };
+                this.hammerMode = false;
+                this.won2048 = false;
+                this.keepPlaying = false;
+                this.secondChanceUsed = false;
+                this.isMoving = false;
+
+                this.tilesLayer = document.getElementById('tiles-layer');
+                this.fxLayer = document.getElementById('fx-layer');
+                this.boardContainer = document.getElementById('board-container');
+            }
+
+            async init() {
+                await vkManager.init();
+                this.setupControls();
+
+                const saved = await vkManager.loadState();
+                if (saved && Array.isArray(saved.grid) && saved.grid.some(row => row.some(v => v > 0))) {
+                    this.bestScore = saved.bestScore || 0;
+                    this.score = saved.score || 0;
+                    this.boosters = saved.boosters || { undo: 2, hammer: 1, shuffle: 1 };
+                    this.won2048 = !!saved.won2048;
+                    this.keepPlaying = !!saved.keepPlaying;
+                    this.secondChanceUsed = !!saved.secondChanceUsed;
+                    this.restoreTilesFromMatrix(saved.grid);
+                    this.renderAll(true);
+                } else {
+                    if (saved && saved.bestScore) this.bestScore = saved.bestScore;
+                    this.startNewGame();
+                }
+            }
+
+            restoreTilesFromMatrix(matrix) {
+                this.tiles = [];
+                for (let r = 0; r < this.size; r++) {
+                    for (let c = 0; c < this.size; c++) {
+                        if (matrix[r][c] > 0) {
+                            this.tiles.push({
+                                id: this.nextTileId++,
+                                r,
+                                c,
+                                value: matrix[r][c],
+                                isNew: false,
+                                isMerged: false
+                            });
+                        }
+                    }
+                }
+            }
+
+            getMatrix() {
+                const m = Array.from({ length: this.size }, () => Array(this.size).fill(0));
+                this.tiles.forEach(t => {
+                    if (!t.toDelete) m[t.r][t.c] = t.value;
+                });
+                return m;
+            }
+
+            startNewGame() {
+                this.closeModal();
+                this.closeConfirm();
+                this.cancelHammerMode();
+
+                this.tiles = [];
+                this.history = [];
+                this.score = 0;
+                this.won2048 = false;
+                this.keepPlaying = false;
+                this.secondChanceUsed = false;
+                this.boosters = { undo: 2, hammer: 1, shuffle: 1 };
+
+                this.tilesLayer.innerHTML = '';
+                this.spawnRandomTile();
+                this.spawnRandomTile();
+                this.renderAll(true);
+                this.saveGame();
+            }
+
+            confirmRestart() {
+                document.getElementById('confirm-overlay').classList.remove('hidden');
+                document.getElementById('confirm-overlay').classList.add('flex');
+            }
+
+            closeConfirm() {
+                document.getElementById('confirm-overlay').classList.add('hidden');
+                document.getElementById('confirm-overlay').classList.remove('flex');
+            }
+
+            spawnRandomTile() {
+                const empty = [];
+                const matrix = this.getMatrix();
+                for (let r = 0; r < this.size; r++) {
+                    for (let c = 0; c < this.size; c++) {
+                        if (matrix[r][c] === 0) empty.push({ r, c });
+                    }
+                }
+                if (empty.length === 0) return false;
+
+                const spot = empty[Math.floor(Math.random() * empty.length)];
+                const value = Math.random() < 0.9 ? 2 : 4;
+                this.tiles.push({
+                    id: this.nextTileId++,
+                    r: spot.r,
+                    c: spot.c,
+                    value: value,
+                    isNew: true,
+                    isMerged: false
+                });
+                return true;
+            }
+
+            saveHistorySnapshot() {
+                const snapshot = {
+                    matrix: this.getMatrix(),
+                    score: this.score
+                };
+                this.history.push(snapshot);
+                if (this.history.length > 5) {
+                    this.history.shift();
+                }
+            }
+
+            /**
+             * Выполнение хода в выбранном направлении:
+             * dir: 'up' | 'down' | 'left' | 'right'
+             */
+            move(dir) {
+                if (this.isMoving || this.hammerMode) return;
+
+                const vectors = {
+                    up: { dr: -1, dc: 0 },
+                    down: { dr: 1, dc: 0 },
+                    left: { dr: 0, dc: -1 },
+                    right: { dr: 0, dc: 1 }
+                };
+                const v = vectors[dir];
+                if (!v) return;
+
+                const preSnapshot = {
+                    matrix: this.getMatrix(),
+                    score: this.score
+                };
+
+                // Очищаем флаги анимаций от прошлого хода
+                this.tiles = this.tiles.filter(t => !t.toDelete);
+                this.tiles.forEach(t => {
+                    t.isNew = false;
+                    t.isMerged = false;
+                });
+
+                const rows = [0, 1, 2, 3];
+                const cols = [0, 1, 2, 3];
+                if (v.dr === 1) rows.reverse();
+                if (v.dc === 1) cols.reverse();
+
+                let moved = false;
+                let scoreGained = 0;
+                let highestMerge = 0;
+                const mergedEvents = [];
+
+                for (const r of rows) {
+                    for (const c of cols) {
+                        const tile = this.getTileAt(r, c);
+                        if (!tile) continue;
+
+                        let nr = r;
+                        let nc = c;
+                        let nextTile = null;
+
+                        while (true) {
+                            const tr = nr + v.dr;
+                            const tc = nc + v.dc;
+                            if (tr < 0 || tr >= this.size || tc < 0 || tc >= this.size) break;
+
+                            const obstacle = this.getTileAt(tr, tc);
+                            if (!obstacle) {
+                                nr = tr;
+                                nc = tc;
+                            } else {
+                                nextTile = obstacle;
+                                break;
+                            }
+                        }
+
+                        // Проверяем возможность слияния с найденной плиткой
+                        if (nextTile && nextTile.value === tile.value && !nextTile.isMerged) {
+                            // Перемещаем обе плитки в точку слияния
+                            tile.r = nextTile.r;
+                            tile.c = nextTile.c;
+                            tile.toDelete = true;
+                            nextTile.toDelete = true;
+
+                            const newValue = tile.value * 2;
+                            const mergedTile = {
+                                id: this.nextTileId++,
+                                r: nextTile.r,
+                                c: nextTile.c,
+                                value: newValue,
+                                isNew: false,
+                                isMerged: true
+                            };
+                            this.tiles.push(mergedTile);
+
+                            moved = true;
+                            scoreGained += newValue;
+                            if (newValue > highestMerge) highestMerge = newValue;
+                            mergedEvents.push({ r: mergedTile.r, c: mergedTile.c, val: newValue });
+                        } else if (nr !== r || nc !== c) {
+                            tile.r = nr;
+                            tile.c = nc;
+                            moved = true;
+                        }
+                    }
+                }
+
+                if (!moved) return;
+
+                // Сохраняем снимок в историю только если ход реально сдвинул кубы
+                this.history.push(preSnapshot);
+                if (this.history.length > 5) this.history.shift();
+
+                if (scoreGained > 0) {
+                    this.score += scoreGained;
+                    if (this.score > this.bestScore) {
+                        this.bestScore = this.score;
+                    }
+                    sound.playMerge(highestMerge);
+                    this.showScoreDelta(scoreGained);
+                    mergedEvents.forEach(ev => this.spawnFloatingScore(ev.r, ev.c, ev.val));
+                } else {
+                    sound.playMove();
+                }
+
+                this.spawnRandomTile();
+                this.renderAll();
+
+                // Очистка старых слитых DOM-элементов после завершения CSS-перехода
+                setTimeout(() => {
+                    this.tiles = this.tiles.filter(t => !t.toDelete);
+                    this.saveGame();
+                    this.checkGameState();
+                }, 135);
+            }
+
+            getTileAt(r, c) {
+                return this.tiles.find(t => !t.toDelete && t.r === r && t.c === c) || null;
+            }
+
+            /**
+             * Отрисовка всех плиток и плавной трансформации координат
+             */
+            renderAll(instant = false) {
+                // Обновляем счетчики
+                document.getElementById('score-val').textContent = this.score.toLocaleString('ru-RU');
+                document.getElementById('best-val').textContent = this.bestScore.toLocaleString('ru-RU');
+                this.updateBoosterUI();
+
+                const activeIds = new Set(this.tiles.map(t => t.id));
+
+                // Удаляем DOM-узлы плиток, которых больше нет
+                Array.from(this.tilesLayer.children).forEach(el => {
+                    const id = Number(el.dataset.id);
+                    if (!activeIds.has(id)) {
+                        el.remove();
+                    }
+                });
+
+                // Создаём или двигаем текущие плитки
+                this.tiles.forEach(tile => {
+                    let el = this.tilesLayer.querySelector(`[data-id="${tile.id}"]`);
+                    const posX = `calc(${tile.c * 100}% + ${tile.c * 12}px)`;
+                    const posY = `calc(${tile.r * 100}% + ${tile.r * 12}px)`;
+
+                    // Адаптивный отступ для маленьких экранов (<380px)
+                    const isSmall = window.innerWidth <= 380;
+                    const gapPx = isSmall ? 9 : 12;
+                    const tx = `calc(${tile.c * 100}% + ${tile.c * gapPx}px)`;
+                    const ty = `calc(${tile.r * 100}% + ${tile.r * gapPx}px)`;
+
+                    if (!el) {
+                        el = document.createElement('div');
+                        el.dataset.id = tile.id;
+                        el.className = `tile ${tile.isNew ? 'tile-new' : ''} ${tile.isMerged ? 'tile-merged' : ''}`;
+                        el.style.setProperty('--tx', tx);
+                        el.style.setProperty('--ty', ty);
+                        el.style.transform = `translate(${tx}, ${ty})`;
+
+                        const inner = document.createElement('div');
+                        inner.className = `tile-inner ${this.getTileColorClass(tile.value)}`;
+                        inner.textContent = tile.value;
+                        el.appendChild(inner);
+
+                        // Обработчик клика по плитке для бустера "Молоток"
+                        el.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            if (this.hammerMode && !tile.toDelete) {
+                                this.smashTileWithHammer(tile.id);
+                            }
+                        });
+
+                        this.tilesLayer.appendChild(el);
+                    } else {
+                        if (instant) {
+                            el.style.transition = 'none';
+                        } else {
+                            el.style.transition = '';
+                        }
+                        el.style.setProperty('--tx', tx);
+                        el.style.setProperty('--ty', ty);
+                        el.style.transform = `translate(${tx}, ${ty})`;
+
+                        const inner = el.firstElementChild;
+                        if (inner) {
+                            inner.className = `tile-inner ${this.getTileColorClass(tile.value)}`;
+                            inner.textContent = tile.value;
+                        }
+                    }
+                });
+            }
+
+            getTileColorClass(val) {
+                if (val <= 2048) return `val-${val}`;
+                return 'val-super';
+            }
+
+            showScoreDelta(delta) {
+                const el = document.getElementById('score-delta');
+                el.textContent = `+${delta}`;
+                el.classList.remove('opacity-0');
+                el.classList.add('opacity-100');
+                clearTimeout(this.deltaTimer);
+                this.deltaTimer = setTimeout(() => {
+                    el.classList.remove('opacity-100');
+                    el.classList.add('opacity-0');
+                }, 650);
+            }
+
+            spawnFloatingScore(r, c, val) {
+                const pop = document.createElement('div');
+                pop.className = 'floating-score';
+                pop.textContent = `+${val}`;
+                pop.style.left = `${(c + 0.35) * 25}%`;
+                pop.style.top = `${(r + 0.3) * 25}%`;
+                this.fxLayer.appendChild(pop);
+                setTimeout(() => pop.remove(), 750);
+            }
+
+            /**
+             * Проверка условий Победы (2048) или Поражения (Game Over)
+             */
+            checkGameState() {
+                const matrix = this.getMatrix();
+
+                // 1. Проверка достижения куба 2048
+                if (!this.won2048 && !this.keepPlaying) {
+                    const has2048 = matrix.some(row => row.some(v => v >= 2048));
+                    if (has2048) {
+                        this.won2048 = true;
+                        sound.playWin();
+                        this.openModal('win');
+                        return;
+                    }
+                }
+
+                // 2. Проверка наличия пустых клеток или возможных слияний
+                for (let r = 0; r < this.size; r++) {
+                    for (let c = 0; c < this.size; c++) {
+                        if (matrix[r][c] === 0) return;
+                        if (c < this.size - 1 && matrix[r][c] === matrix[r][c + 1]) return;
+                        if (r < this.size - 1 && matrix[r][c] === matrix[r + 1][c]) return;
+                    }
+                }
+
+                // Ходов больше нет -> Поражение
+                this.openModal('gameover');
+            }
+
+            /**
+             * ============================================================================
+             * БУСТЕРЫ И МОНЕТИЗАЦИЯ ЗА РЕКЛАМУ ВК
+             * ============================================================================
+             */
+            updateBoosterUI() {
+                // Undo
+                const badgeUndo = document.getElementById('badge-undo');
+                const subUndo = document.getElementById('sub-undo');
+                if (this.boosters.undo > 0) {
+                    badgeUndo.textContent = this.boosters.undo;
+                    badgeUndo.className = 'absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-600 text-white shadow';
+                    subUndo.textContent = 'Отмена хода';
+                } else {
+                    badgeUndo.textContent = '🎬 +2';
+                    badgeUndo.className = 'absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500 text-zinc-950 shadow';
+                    subUndo.textContent = 'За рекламу ВК';
+                }
+
+                // Hammer
+                const badgeHammer = document.getElementById('badge-hammer');
+                const subHammer = document.getElementById('sub-hammer');
+                if (this.boosters.hammer > 0) {
+                    badgeHammer.textContent = this.boosters.hammer;
+                    badgeHammer.className = 'absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white shadow';
+                    subHammer.textContent = 'Разбить куб';
+                } else {
+                    badgeHammer.textContent = '🎬 +1';
+                    badgeHammer.className = 'absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500 text-zinc-950 shadow';
+                    subHammer.textContent = 'За рекламу ВК';
+                }
+
+                // Shuffle
+                const badgeShuffle = document.getElementById('badge-shuffle');
+                const subShuffle = document.getElementById('sub-shuffle');
+                if (this.boosters.shuffle > 0) {
+                    badgeShuffle.textContent = this.boosters.shuffle;
+                    badgeShuffle.className = 'absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-600 text-white shadow';
+                    subShuffle.textContent = 'Перемешать';
+                } else {
+                    badgeShuffle.textContent = '🎬 +1';
+                    badgeShuffle.className = 'absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-500 text-zinc-950 shadow';
+                    subShuffle.textContent = 'За рекламу ВК';
+                }
+            }
+
+            // 1. Отмена хода (Undo)
+            useUndo() {
+                this.cancelHammerMode();
+                if (this.boosters.undo <= 0) {
+                    vkManager.showRewardedAd(() => {
+                        this.boosters.undo += 2;
+                        this.updateBoosterUI();
+                        this.saveGame();
+                    });
+                    return;
+                }
+
+                if (this.history.length === 0) {
+                    vkManager.showToast('ℹ️', 'Нет прошлых ходов для отмены');
+                    return;
+                }
+
+                const last = this.history.pop();
+                this.boosters.undo--;
+                this.score = last.score;
+                this.tilesLayer.innerHTML = '';
+                this.restoreTilesFromMatrix(last.matrix);
+                sound.playMove();
+                this.renderAll(true);
+                this.saveGame();
+            }
+
+            // 2. Молоток (Разбить любую плитку)
+            toggleHammer() {
+                if (this.hammerMode) {
+                    this.cancelHammerMode();
+                    return;
+                }
+
+                if (this.boosters.hammer <= 0) {
+                    vkManager.showRewardedAd(() => {
+                        this.boosters.hammer += 1;
+                        this.updateBoosterUI();
+                        this.saveGame();
+                    });
+                    return;
+                }
+
+                const activeTiles = this.tiles.filter(t => !t.toDelete);
+                if (activeTiles.length <= 1) {
+                    vkManager.showToast('ℹ️', 'На поле должна остаться хотя бы 1 плитка!');
+                    return;
+                }
+
+                this.hammerMode = true;
+                this.boardContainer.classList.add('hammer-mode');
+                document.getElementById('btn-hammer').classList.add('active-mode');
+                document.getElementById('hammer-banner').classList.remove('hidden');
+            }
+
+            cancelHammerMode() {
+                this.hammerMode = false;
+                this.boardContainer.classList.remove('hammer-mode');
+                document.getElementById('btn-hammer').classList.remove('active-mode');
+                document.getElementById('hammer-banner').classList.add('hidden');
+            }
+
+            smashTileWithHammer(tileId) {
+                const activeTiles = this.tiles.filter(t => !t.toDelete);
+                if (activeTiles.length <= 1) return;
+
+                const target = this.tiles.find(t => t.id === tileId);
+                if (!target) return;
+
+                this.saveHistorySnapshot();
+                this.boosters.hammer--;
+                this.tiles = this.tiles.filter(t => t.id !== tileId);
+
+                sound.playHammer();
+                this.cancelHammerMode();
+                this.renderAll();
+                this.saveGame();
+                vkManager.showToast('💥', `Куб ${target.value} разбит!`);
+            }
+
+            // 3. Миксер (Перемешать все плитки на поле)
+            useShuffle() {
+                this.cancelHammerMode();
+                if (this.boosters.shuffle <= 0) {
+                    vkManager.showRewardedAd(() => {
+                        this.boosters.shuffle += 1;
+                        this.updateBoosterUI();
+                        this.saveGame();
+                    });
+                    return;
+                }
+
+                const activeTiles = this.tiles.filter(t => !t.toDelete);
+                if (activeTiles.length < 2) return;
+
+                this.saveHistorySnapshot();
+                this.boosters.shuffle--;
+
+                // Генерируем случайные координаты для всех текущих плиток
+                const allCoords = [];
+                for (let r = 0; r < this.size; r++) {
+                    for (let c = 0; c < this.size; c++) {
+                        allCoords.push({ r, c });
+                    }
+                }
+                // Перемешивание Фишера-Йетса
+                for (let i = allCoords.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [allCoords[i], allCoords[j]] = [allCoords[j], allCoords[i]];
+                }
+
+                activeTiles.forEach((tile, idx) => {
+                    tile.r = allCoords[idx].r;
+                    tile.c = allCoords[idx].c;
+                    tile.isNew = false;
+                    tile.isMerged = true;
+                });
+
+                sound.playMerge(64);
+                this.renderAll();
+                this.saveGame();
+                vkManager.showToast('🌪️', 'Плитки перемешаны!');
+            }
+
+            // 4. Второй шанс при Game Over (удаляет все мелкие кубы 2 и 4 за рекламу)
+            useSecondChance() {
+                vkManager.showRewardedAd(() => {
+                    this.secondChanceUsed = true;
+                    const active = this.tiles.filter(t => !t.toDelete);
+                    // Оставляем только крупные кубы (>= 8)
+                    let remaining = active.filter(t => t.value > 4);
+                    // Если вдруг все кубы были 2 и 4, оставляем 2 самых больших
+                    if (remaining.length === 0) {
+                        remaining = active.sort((a, b) => b.value - a.value).slice(0, 2);
+                    }
+                    this.tiles = remaining;
+                    this.closeModal();
+                    sound.playWin();
+                    this.renderAll();
+                    this.saveGame();
+                });
+            }
+
+            /**
+             * ============================================================================
+             * МОДАЛЬНЫЕ ОКНА И ЗВУК
+             * ============================================================================
+             */
+            openModal(type) {
+                const overlay = document.getElementById('modal-overlay');
+                const icon = document.getElementById('modal-icon');
+                const title = document.getElementById('modal-title');
+                const desc = document.getElementById('modal-desc');
+                const btnSecond = document.getElementById('btn-second-chance');
+                const btnCont = document.getElementById('btn-continue');
+
+                document.getElementById('modal-score').textContent = this.score.toLocaleString('ru-RU');
+                document.getElementById('modal-best').textContent = this.bestScore.toLocaleString('ru-RU');
+
+                if (type === 'win') {
+                    icon.textContent = '🏆';
+                    icon.className = 'w-16 h-16 mx-auto mb-3 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-3xl shadow-lg';
+                    title.textContent = 'Победа! Куб 2048!';
+                    desc.textContent = 'Невероятно! Ты собрал неоновый куб 2048! Хочешь пойти на рекорд 4096?';
+                    btnCont.classList.remove('hidden');
+                    btnSecond.classList.add('hidden');
+                } else {
+                    icon.textContent = '⚡';
+                    icon.className = 'w-16 h-16 mx-auto mb-3 rounded-2xl bg-rose-500/20 border border-rose-500/40 flex items-center justify-center text-3xl shadow-lg';
+                    title.textContent = 'Нет свободных ходов!';
+                    desc.textContent = 'Поле заполнено, но ты можешь очистить все мелкие кубы (2 и 4) и продолжить партию!';
+                    btnCont.classList.add('hidden');
+                    if (!this.secondChanceUsed) {
+                        btnSecond.classList.remove('hidden');
+                    } else {
+                        btnSecond.classList.add('hidden');
+                    }
+                }
+
+                overlay.classList.remove('hidden');
+                overlay.classList.add('flex');
+            }
+
+            closeModal() {
+                const overlay = document.getElementById('modal-overlay');
+                overlay.classList.add('hidden');
+                overlay.classList.remove('flex');
+            }
+
+            continueAfter2048() {
+                this.keepPlaying = true;
+                this.closeModal();
+                this.saveGame();
+            }
+
+            toggleSound() {
+                sound.enabled = !sound.enabled;
+                document.getElementById('icon-sound-on').classList.toggle('hidden', !sound.enabled);
+                document.getElementById('icon-sound-off').classList.toggle('hidden', sound.enabled);
+                if (sound.enabled) sound.playMove();
+            }
+
+            saveGame() {
+                vkManager.saveState({
+                    grid: this.getMatrix(),
+                    score: this.score,
+                    bestScore: this.bestScore,
+                    boosters: this.boosters,
+                    won2048: this.won2048,
+                    keepPlaying: this.keepPlaying,
+                    secondChanceUsed: this.secondChanceUsed
+                });
+            }
+
+            /**
+             * ============================================================================
+             * УПРАВЛЕНИЕ: КЛАВИАТУРА (WASD / СТРЕЛКИ) + СВАЙПЫ НА МОБИЛКАХ
+             * ============================================================================
+             */
+            setupControls() {
+                // Клавиатура
+                window.addEventListener('keydown', (e) => {
+                    const modalOpen = !document.getElementById('modal-overlay').classList.contains('hidden');
+                    if (modalOpen) return;
+
+                    const keyMap = {
+                        ArrowUp: 'up', KeyW: 'up',
+                        ArrowDown: 'down', KeyS: 'down',
+                        ArrowLeft: 'left', KeyA: 'left',
+                        ArrowRight: 'right', KeyD: 'right'
+                    };
+                    const dir = keyMap[e.code];
+                    if (dir) {
+                        e.preventDefault();
+                        this.move(dir);
+                    }
+                });
+
+                // Тач-свайпы по игровому полю
+                let startX = 0;
+                let startY = 0;
+
+                this.boardContainer.addEventListener('touchstart', (e) => {
+                    if (e.touches.length > 0) {
+                        startX = e.touches[0].clientX;
+                        startY = e.touches[0].clientY;
+                    }
+                }, { passive: true });
+
+                this.boardContainer.addEventListener('touchend', (e) => {
+                    if (this.hammerMode || e.changedTouches.length === 0) return;
+
+                    const dx = e.changedTouches[0].clientX - startX;
+                    const dy = e.changedTouches[0].clientY - startY;
+                    const absX = Math.abs(dx);
+                    const absY = Math.abs(dy);
+
+                    // Порог чувствительности свайпа 26px
+                    if (Math.max(absX, absY) > 26) {
+                        if (absX > absY) {
+                            this.move(dx > 0 ? 'right' : 'left');
+                        } else {
+                            this.move(dy > 0 ? 'down' : 'up');
+                        }
+                    }
+                }, { passive: true });
+
+                // Пересчет координат при ресайзе окна ВК
+                window.addEventListener('resize', () => {
+                    this.renderAll(true);
+                });
+            }
+        }
+
+        const game = new Cube2048Game();
+        window.onload = () => {
+            game.init();
+        };
+    </script>
+</body>
+</html>
